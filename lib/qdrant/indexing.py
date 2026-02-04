@@ -5,6 +5,7 @@ This module provides functionality for creating collections, chunking documents,
 generating embeddings, and indexing content into Qdrant vector database.
 """
 
+import hashlib
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,7 +17,28 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 
 from ..embedding.client import OllamaEmbeddingClient
 from ..embedding.formatter import format_document
-from ..utils.snowflake import get_snowflake_ids
+
+
+def generate_chunk_id(source: str, chunk_index: int) -> int:
+    """
+    Generate a deterministic chunk ID based on source and chunk index.
+    
+    This enables proper upsert behavior - the same content will always
+    produce the same ID, allowing incremental updates without duplicates.
+    
+    Args:
+        source: Source identifier (file path, URL, or title)
+        chunk_index: Index of the chunk within the document
+        
+    Returns:
+        A positive integer ID derived from MD5 hash
+    """
+    # Create a unique string combining source and chunk index
+    unique_str = f"{source}:chunk:{chunk_index}"
+    # Generate MD5 hash and take first 16 hex chars (64 bits)
+    hash_hex = hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:16]
+    # Convert to positive integer
+    return int(hash_hex, 16)
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +178,13 @@ class QdrantIndexer:
         # Limit chunks per article to avoid overwhelming the index
         chunks = chunks[:max_chunks_per_article]
 
-        ids = get_snowflake_ids(len(chunks))
+        # Use file_path if available, otherwise fall back to title or article_id
+        source_identifier = (
+            article.get("file_path") 
+            or article.get("source") 
+            or title 
+            or str(article_id)
+        )
 
         chunk_objects = []
         for i, chunk in enumerate(chunks):
@@ -169,8 +197,9 @@ class QdrantIndexer:
             formatted_text = format_document(title, chunk, self.embedding_model)
             print("Formatted text:", formatted_text)
 
-            # Generate unique Snowflake ID for each chunk
-            chunk_id = ids[i] + i
+            # Generate deterministic chunk ID based on source and index
+            # This enables proper incremental updates via upsert
+            chunk_id = generate_chunk_id(source_identifier, i)
 
             chunk_objects.append(
                 {
@@ -180,7 +209,7 @@ class QdrantIndexer:
                     "title": title,
                     "content": chunk,
                     "text": formatted_text,  # Model-specific formatted text for embedding
-                    "source": article.get("source", "unknown"),
+                    "source": article.get("source", source_identifier),
                 }
             )
 
@@ -574,7 +603,12 @@ def create_chunk_objects(
     max_chunks_per_article: int = 10,
     model_name: str = "embeddinggemma:latest",
 ) -> List[Dict]:
-    """Legacy function for backward compatibility."""
+    """
+    Legacy function for backward compatibility.
+    
+    Note: Now uses deterministic chunk IDs based on source/file_path,
+    enabling proper incremental indexing via upsert.
+    """
     indexer = QdrantIndexer(None, None, model_name)
     return indexer.create_chunk_objects(
         article, chunk_size, chunk_overlap, max_chunks_per_article
