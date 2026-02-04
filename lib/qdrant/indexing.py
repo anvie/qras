@@ -381,6 +381,44 @@ class QdrantIndexer:
             collection_name, all_chunks, batch_size, max_workers, progress_callback
         )
 
+    def delete_by_source(
+        self,
+        collection_name: str,
+        source: str,
+    ) -> int:
+        """
+        Delete all chunks belonging to a specific source/file.
+
+        Args:
+            collection_name: Name of the collection
+            source: Source identifier (file_path) to delete
+
+        Returns:
+            Number of points deleted
+        """
+        try:
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+            # Delete points where source matches
+            result = self.qdrant_client.delete(
+                collection_name=collection_name,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(
+                            key="source",
+                            match=MatchValue(value=source),
+                        )
+                    ]
+                ),
+            )
+
+            logger.info(f"🗑️ Deleted chunks for source: {source}")
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ Failed to delete chunks for source '{source}': {e}")
+            raise
+
 
 # Document reading utilities
 def read_markdown_files(
@@ -541,6 +579,61 @@ def read_json_files(directory_path: str, max_docs: Optional[int] = None) -> List
 
     logger.info(f"Successfully loaded {len(documents)} JSON documents")
     return documents
+
+
+def read_single_markdown_file(file_path: str, base_dir: Optional[str] = None) -> Dict:
+    """
+    Read and parse a single markdown file.
+
+    Args:
+        file_path: Path to the markdown file
+        base_dir: Optional base directory for relative path calculation
+
+    Returns:
+        Document dictionary with id, title, content, and file_path
+    """
+    md_file = Path(file_path)
+
+    if not md_file.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    if not md_file.is_file():
+        raise ValueError(f"Path is not a file: {file_path}")
+
+    if not file_path.endswith(".md"):
+        raise ValueError(f"Not a markdown file: {file_path}")
+
+    # Read file content
+    with open(md_file, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    if not content.strip():
+        raise ValueError(f"File is empty: {file_path}")
+
+    # Extract title from first H1 heading or use filename
+    title = extract_title_from_markdown(content)
+    if not title:
+        title = md_file.stem.replace("_", " ").replace("-", " ")
+
+    # Calculate relative path
+    if base_dir:
+        try:
+            relative_path = str(md_file.relative_to(base_dir))
+        except ValueError:
+            relative_path = md_file.name
+    else:
+        relative_path = md_file.name
+
+    doc = {
+        "id": 1,
+        "title": title,
+        "content": content,
+        "file_path": relative_path,
+        "category": md_file.parent.name if md_file.parent.name != "." else "root",
+    }
+
+    logger.info(f"Loaded markdown file: {file_path}")
+    return doc
 
 
 def extract_title_from_markdown(content: str) -> Optional[str]:

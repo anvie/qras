@@ -23,6 +23,7 @@ from lib.qdrant.indexing import (
     QdrantIndexer,
     read_markdown_files,
     read_json_files,
+    read_single_markdown_file,
 )
 from lib.qdrant.search import get_collection_stats
 from lib.utils.config import get_config
@@ -88,25 +89,30 @@ def create_collection_if_needed(
 
 
 def load_documents(
-    input_path: str, max_docs: Optional[int] = None, file_type: str = "auto"
+    input_path: str, max_docs: Optional[int] = None, file_type: str = "auto",
+    base_dir: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Load documents from input path."""
-    input_dir = Path(input_path)
+    """Load documents from input path (file or directory)."""
+    input_path_obj = Path(input_path)
 
-    if not input_dir.exists():
+    if not input_path_obj.exists():
         raise FileNotFoundError(f"Input path not found: {input_path}")
 
-    if input_dir.is_file():
-        # Single file - determine type from extension
-        if input_path.endswith(".json"):
-            file_type = "json"
-        elif input_path.endswith(".md"):
-            file_type = "markdown"
+    # Handle single file input
+    if input_path_obj.is_file():
+        if input_path.endswith(".md"):
+            print(f"📄 Loading single markdown file: {input_path}")
+            doc = read_single_markdown_file(input_path, base_dir)
+            return [doc]
+        elif input_path.endswith(".json"):
+            # For JSON, we still need to handle it - could be single doc or array
+            print(f"📄 Loading single JSON file: {input_path}")
+            return read_json_files(str(input_path_obj.parent), max_docs)
         else:
             raise ValueError(f"Unsupported file type: {input_path}")
 
-        # Create temporary directory structure for single file
-        input_dir = input_dir.parent
+    # Handle directory input
+    input_dir = input_path_obj
 
     # Auto-detect file type if not specified
     if file_type == "auto":
@@ -276,6 +282,39 @@ def show_collection_info(args) -> None:
         sys.exit(1)
 
 
+def delete_by_source(args) -> None:
+    """Delete all chunks for a specific source/file from the collection."""
+    print(f"🗑️  Deleting chunks for: {args.delete}")
+    print(f"🎯 Collection: {args.collection}")
+
+    try:
+        qdrant_client = QdrantClient(url=args.qdrant_url, timeout=30.0)
+
+        # Get stats before deletion
+        stats_before = get_collection_stats(qdrant_client, args.collection)
+        points_before = stats_before.get("points_count", 0)
+
+        # Create indexer (embedding client not needed for delete)
+        indexer = QdrantIndexer(qdrant_client, None, "")
+
+        # Delete chunks by source
+        indexer.delete_by_source(args.collection, args.delete)
+
+        # Get stats after deletion
+        stats_after = get_collection_stats(qdrant_client, args.collection)
+        points_after = stats_after.get("points_count", 0)
+
+        deleted_count = points_before - points_after
+        print(f"✅ Deleted {deleted_count} chunks")
+        print(f"📊 Collection now has {points_after} chunks")
+
+        qdrant_client.close()
+
+    except Exception as e:
+        print(f"❌ Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     """Main CLI entry point."""
     # Load configuration
@@ -287,13 +326,16 @@ def main():
         epilog="""
 Examples:
   %(prog)s --input-path ./documents --collection docs
+  %(prog)s --input-path ./single-file.md --collection docs  # Index single file
   %(prog)s --input-path ./articles.json --collection articles --recreate
   %(prog)s --input-path ./data --model bge-m3:567m --chunk-size 200
+  %(prog)s --delete MEMORY.md --collection docs  # Delete chunks for a file
   %(prog)s --info  # Show all collections
   %(prog)s --info --collection docs  # Show specific collection stats
 
 Supported file types: JSON, Markdown (.md)
 File type is auto-detected based on file extensions.
+Single file indexing uses deterministic IDs for proper upsert (update in place).
     """,
     )
 
@@ -304,6 +346,10 @@ File type is auto-detected based on file extensions.
     )
     operation.add_argument(
         "--info", action="store_true", help="Show collection information and statistics"
+    )
+    operation.add_argument(
+        "--delete", "-d", metavar="FILE_PATH",
+        help="Delete all chunks for a specific file/source from the collection"
     )
 
     # Connection settings
@@ -409,9 +455,9 @@ File type is auto-detected based on file extensions.
     logging.basicConfig(level=log_level, format="%(levelname)s: %(message)s")
 
     # Validate arguments
-    if not args.input_path and not args.info:
+    if not args.input_path and not args.info and not args.delete:
         parser.error(
-            "Must provide --input-path to index documents or --info to show collection information"
+            "Must provide --input-path to index, --delete to remove, or --info to show collection information"
         )
 
     if args.input_path and not Path(args.input_path).exists():
@@ -420,6 +466,8 @@ File type is auto-detected based on file extensions.
     try:
         if args.info:
             show_collection_info(args)
+        elif args.delete:
+            delete_by_source(args)
         else:
             index_documents(args)
 
