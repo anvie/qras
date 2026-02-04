@@ -9,6 +9,8 @@ A comprehensive Retrieval-Augmented Generation (RAG) system that combines semant
 - **RAG Chat System**: Context-aware chat powered by LLMs with retrieved documents
 - **Multiple Data Sources**: Index from JSON files or markdown directories
 - **Hybrid Search**: Combines vector similarity with keyword matching for better relevance
+- **Incremental Indexing**: Update single files without re-indexing everything
+- **LLM-Optimized Output**: Token-efficient output format designed for AI agents
 - **Interactive Modes**: Both search and chat interfaces with rich commands
 - **Streaming Responses**: Real-time streaming of LLM responses
 - **Web Interface**: FastAPI backend with Svelte frontend.
@@ -81,17 +83,20 @@ Use the `./qras` script as your main entry point:
 Search your indexed documents with semantic or hybrid search:
 
 ```bash
-# Basic search
+# Basic search (LLM-optimized output by default)
 ./qras query "machine learning algorithms"
-
-# Interactive search mode
-./qras query --interactive
 
 # Hybrid search (vector + keyword)
 ./qras query "neural networks" --hybrid --limit 5
 
+# Verbose mode (detailed output with emojis and timing)
+./qras query "neural networks" --hybrid --verbose
+
 # Save results to file
 ./qras query "deep learning" --output-format json --output results.json
+
+# Interactive search mode
+./qras query --interactive
 
 # Show specific article
 ./qras query --article-id 123 --collection articles
@@ -101,7 +106,9 @@ Search your indexed documents with semantic or hybrid search:
 
 - `--hybrid`: Use hybrid search (vector + keyword matching)
 - `--limit`: Maximum number of results (default: 10)
-- `--output-format`: `detailed`, `compact`, or `json`
+- `--output-format`: `llm` (default), `verbose`, `compact`, or `json`
+- `--verbose`: Show debug logs and detailed output with emojis
+- `--max-content`: Max characters per result (default: 500)
 - `--collection`: Collection to search (default: docs)
 - `--interactive`: Interactive search mode
 
@@ -112,6 +119,12 @@ Index documents into the vector database:
 ```bash
 # Index a directory of documents
 ./qras index --input-path ./documents --collection docs
+
+# Index a single file (incremental update)
+./qras index --input-path ./notes/meeting.md --collection docs
+
+# Delete chunks for a specific file
+./qras index --delete "meeting.md" --collection docs
 
 # Index JSON files
 ./qras index --input-path ./articles.json --collection articles
@@ -129,11 +142,14 @@ Index documents into the vector database:
 
 **Key Options:**
 
-- `--input-path`: Path to documents directory or file
+- `--input-path`: Path to documents directory or single file
+- `--delete`: Delete all chunks for a specific source/file
 - `--collection`: Collection name (default: docs)
 - `--recreate`: Delete and recreate collection
 - `--chunk-size`: Words per chunk (default: 150)
 - `--file-type`: `auto`, `json`, or `markdown`
+
+**Note:** Single file indexing uses deterministic chunk IDs, enabling proper incremental updates without duplicates.
 
 #### Chat (`chat`)
 
