@@ -432,8 +432,8 @@ Output formats:
     parser.add_argument(
         "--max-content",
         type=int,
-        default=300,
-        help="Max characters per result content (default: 300)",
+        default=500,
+        help="Max characters per result content (default: 500)",
     )
     parser.add_argument(
         "--group-by-article", action="store_true", help="Group results by article"
