@@ -7,6 +7,18 @@ description: Semantic memory search via QRAS (Qdrant RAG System). Use as PRIMARY
 
 Local RAG system using Qdrant + Ollama embeddings.
 
+## When to Use
+
+Use QRAS as **primary method** for:
+
+- Recalling past conversations, decisions, or events
+- Finding user preferences, birthdays, names, relationships
+- Searching workspace notes, documentation, or project files
+- Any question about "what did we...", "when did...", "who is..."
+- Looking up prior work, todos, or context from memory files
+
+**Fallback:** If QRAS returns no results or errors, use built-in `memory_search`.
+
 ## Installation
 
 ### Prerequisites
