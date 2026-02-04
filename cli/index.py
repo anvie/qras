@@ -27,6 +27,7 @@ from lib.qdrant.indexing import (
 )
 from lib.qdrant.search import get_collection_stats
 from lib.utils.config import get_config
+from lib.utils.exclude import load_exclude_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def create_collection_if_needed(
 
 def load_documents(
     input_path: str, max_docs: Optional[int] = None, file_type: str = "auto",
-    base_dir: Optional[str] = None
+    base_dir: Optional[str] = None, exclude_patterns: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """Load documents from input path (file or directory)."""
     input_path_obj = Path(input_path)
@@ -102,7 +103,7 @@ def load_documents(
     if input_path_obj.is_file():
         if input_path.endswith(".md"):
             print(f"📄 Loading single markdown file: {input_path}")
-            doc = read_single_markdown_file(input_path, base_dir)
+            doc = read_single_markdown_file(input_path, base_dir, exclude_patterns)
             return [doc]
         elif input_path.endswith(".json"):
             # For JSON, we still need to handle it - could be single doc or array
@@ -136,7 +137,7 @@ def load_documents(
     if file_type == "json":
         return read_json_files(str(input_dir), max_docs)
     elif file_type == "markdown":
-        return read_markdown_files(str(input_dir), max_docs)
+        return read_markdown_files(str(input_dir), max_docs, exclude_patterns)
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -148,6 +149,13 @@ def index_documents(args) -> None:
 
     # Load configuration
     config = get_config(args.config_file) if args.config_file else get_config()
+    
+    # Load exclude patterns
+    exclude_patterns = []
+    if not args.no_exclude:
+        exclude_patterns = load_exclude_patterns(args.exclude_file)
+        if exclude_patterns:
+            print(f"🚫 Loaded {len(exclude_patterns)} exclude patterns")
 
     # Initialize clients
     print("🔗 Connecting to services...")
@@ -186,7 +194,10 @@ def index_documents(args) -> None:
 
         # Load documents
         print(f"📚 Loading documents from: {args.input_path}")
-        documents = load_documents(args.input_path, args.max_docs, args.file_type)
+        documents = load_documents(
+            args.input_path, args.max_docs, args.file_type, 
+            exclude_patterns=exclude_patterns
+        )
 
         if not documents:
             print("❌ No documents found to index")
@@ -379,6 +390,17 @@ Single file indexing uses deterministic IDs for proper upsert (update in place).
         choices=["cosine", "dot", "euclidean"],
         default="cosine",
         help="Distance metric for similarity (default: cosine)",
+    )
+
+    # Exclude patterns
+    parser.add_argument(
+        "--exclude-file",
+        help="Path to exclude file (default: .exclude in qras directory)",
+    )
+    parser.add_argument(
+        "--no-exclude",
+        action="store_true",
+        help="Disable exclude patterns (ignore .exclude file)",
     )
 
     # Indexing parameters

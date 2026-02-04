@@ -17,6 +17,7 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 
 from ..embedding.client import OllamaEmbeddingClient
 from ..embedding.formatter import format_document
+from ..utils.exclude import load_exclude_patterns, filter_files, should_exclude
 
 
 def generate_chunk_id(source: str, chunk_index: int) -> int:
@@ -422,7 +423,9 @@ class QdrantIndexer:
 
 # Document reading utilities
 def read_markdown_files(
-    directory_path: str, max_docs: Optional[int] = None
+    directory_path: str, 
+    max_docs: Optional[int] = None,
+    exclude_patterns: Optional[List[str]] = None,
 ) -> List[Dict]:
     """
     Read and parse markdown files from a directory.
@@ -430,6 +433,7 @@ def read_markdown_files(
     Args:
         directory_path: Path to directory containing markdown files
         max_docs: Maximum number of documents to process
+        exclude_patterns: List of patterns to exclude (loaded from .exclude file)
 
     Returns:
         List of document dictionaries with id, title, and content
@@ -445,6 +449,10 @@ def read_markdown_files(
 
     # Find all markdown files recursively
     md_files = sorted(directory.rglob("*.md"))
+    
+    # Apply exclude patterns if provided
+    if exclude_patterns:
+        md_files = filter_files(md_files, exclude_patterns)
 
     if not md_files:
         raise ValueError(f"No markdown files found in: {directory_path}")
@@ -581,18 +589,30 @@ def read_json_files(directory_path: str, max_docs: Optional[int] = None) -> List
     return documents
 
 
-def read_single_markdown_file(file_path: str, base_dir: Optional[str] = None) -> Dict:
+def read_single_markdown_file(
+    file_path: str, 
+    base_dir: Optional[str] = None,
+    exclude_patterns: Optional[List[str]] = None,
+) -> Dict:
     """
     Read and parse a single markdown file.
 
     Args:
         file_path: Path to the markdown file
         base_dir: Optional base directory for relative path calculation
+        exclude_patterns: List of patterns to check for exclusion
 
     Returns:
         Document dictionary with id, title, content, and file_path
+        
+    Raises:
+        ValueError: If file matches exclude patterns
     """
     md_file = Path(file_path)
+    
+    # Check if file should be excluded
+    if exclude_patterns and should_exclude(str(md_file), exclude_patterns):
+        raise ValueError(f"File is excluded by pattern: {file_path}")
 
     if not md_file.exists():
         raise FileNotFoundError(f"File not found: {file_path}")

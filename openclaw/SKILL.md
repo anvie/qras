@@ -91,14 +91,25 @@ Use QRAS as **primary method** for:
 ### Full Re-index
 
 ```bash
-./qras index --input-path /path/to/docs --collection <collection> --file-type markdown --recreate
+./qras index --input-path workspace/memory --collection <collection> --file-type markdown --recreate
 ```
+
+## Index Scope
+
+**ONLY index memory files:**
+- `workspace/memory/*.md` — daily logs
+- `workspace/MEMORY.md` — long-term memory
+
 
 ## Workflow
 
 1. **Always try QRAS first** for memory recall
 2. If no results or error → fallback to built-in `memory_search`
 3. Use `memory_get` to pull specific lines after finding matches
+4. **After updating any memory file** (`memory/*.md`, `MEMORY.md`), re-index it:
+   ```bash
+   ./qras index --input-path /path/to/updated-file.md --collection <collection>
+   ```
 
 ## Optimal Parameters
 
@@ -121,3 +132,17 @@ Collection: your-collection-name
 Ollama: localhost:11434
 Model: bge-m3:567m
 ```
+
+## Agent Setup (Important!)
+
+After installing QRAS, **update your `AGENTS.md`** to enforce QRAS-first behavior. Add this under the "Every Session" section:
+
+```markdown
+### 🔍 Memory Recall Rule
+
+**QRAS first, `memory_search` fallback.** When recalling anything (siapa, kapan, apa), always use the QRAS skill first. Only fall back to built-in `memory_search` if QRAS returns no results or errors.
+
+**Index after writing.** Every time you update a memory file (`memory/*.md`, `MEMORY.md`), re-index it with QRAS so future searches can find it.
+```
+
+This ensures you don't reflexively use built-in `memory_search` when QRAS is available.
