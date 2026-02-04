@@ -5,6 +5,7 @@ This module provides functionality for creating collections, chunking documents,
 generating embeddings, and indexing content into Qdrant vector database.
 """
 
+import hashlib
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,7 +17,28 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 
 from ..embedding.client import OllamaEmbeddingClient
 from ..embedding.formatter import format_document
-from ..utils.snowflake import get_snowflake_ids
+
+
+def generate_chunk_id(source: str, chunk_index: int) -> int:
+    """
+    Generate a deterministic chunk ID based on source and chunk index.
+    
+    This enables proper upsert behavior - the same content will always
+    produce the same ID, allowing incremental updates without duplicates.
+    
+    Args:
+        source: Source identifier (file path, URL, or title)
+        chunk_index: Index of the chunk within the document
+        
+    Returns:
+        A positive integer ID derived from MD5 hash
+    """
+    # Create a unique string combining source and chunk index
+    unique_str = f"{source}:chunk:{chunk_index}"
+    # Generate MD5 hash and take first 16 hex chars (64 bits)
+    hash_hex = hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:16]
+    # Convert to positive integer
+    return int(hash_hex, 16)
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +178,13 @@ class QdrantIndexer:
         # Limit chunks per article to avoid overwhelming the index
         chunks = chunks[:max_chunks_per_article]
 
-        ids = get_snowflake_ids(len(chunks))
+        # Use file_path if available, otherwise fall back to title or article_id
+        source_identifier = (
+            article.get("file_path") 
+            or article.get("source") 
+            or title 
+            or str(article_id)
+        )
 
         chunk_objects = []
         for i, chunk in enumerate(chunks):
@@ -169,8 +197,9 @@ class QdrantIndexer:
             formatted_text = format_document(title, chunk, self.embedding_model)
             print("Formatted text:", formatted_text)
 
-            # Generate unique Snowflake ID for each chunk
-            chunk_id = ids[i] + i
+            # Generate deterministic chunk ID based on source and index
+            # This enables proper incremental updates via upsert
+            chunk_id = generate_chunk_id(source_identifier, i)
 
             chunk_objects.append(
                 {
@@ -180,7 +209,7 @@ class QdrantIndexer:
                     "title": title,
                     "content": chunk,
                     "text": formatted_text,  # Model-specific formatted text for embedding
-                    "source": article.get("source", "unknown"),
+                    "source": article.get("source", source_identifier),
                 }
             )
 
@@ -352,6 +381,44 @@ class QdrantIndexer:
             collection_name, all_chunks, batch_size, max_workers, progress_callback
         )
 
+    def delete_by_source(
+        self,
+        collection_name: str,
+        source: str,
+    ) -> int:
+        """
+        Delete all chunks belonging to a specific source/file.
+
+        Args:
+            collection_name: Name of the collection
+            source: Source identifier (file_path) to delete
+
+        Returns:
+            Number of points deleted
+        """
+        try:
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+            # Delete points where source matches
+            result = self.qdrant_client.delete(
+                collection_name=collection_name,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(
+                            key="source",
+                            match=MatchValue(value=source),
+                        )
+                    ]
+                ),
+            )
+
+            logger.info(f"🗑️ Deleted chunks for source: {source}")
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ Failed to delete chunks for source '{source}': {e}")
+            raise
+
 
 # Document reading utilities
 def read_markdown_files(
@@ -514,6 +581,61 @@ def read_json_files(directory_path: str, max_docs: Optional[int] = None) -> List
     return documents
 
 
+def read_single_markdown_file(file_path: str, base_dir: Optional[str] = None) -> Dict:
+    """
+    Read and parse a single markdown file.
+
+    Args:
+        file_path: Path to the markdown file
+        base_dir: Optional base directory for relative path calculation
+
+    Returns:
+        Document dictionary with id, title, content, and file_path
+    """
+    md_file = Path(file_path)
+
+    if not md_file.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    if not md_file.is_file():
+        raise ValueError(f"Path is not a file: {file_path}")
+
+    if not file_path.endswith(".md"):
+        raise ValueError(f"Not a markdown file: {file_path}")
+
+    # Read file content
+    with open(md_file, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    if not content.strip():
+        raise ValueError(f"File is empty: {file_path}")
+
+    # Extract title from first H1 heading or use filename
+    title = extract_title_from_markdown(content)
+    if not title:
+        title = md_file.stem.replace("_", " ").replace("-", " ")
+
+    # Calculate relative path
+    if base_dir:
+        try:
+            relative_path = str(md_file.relative_to(base_dir))
+        except ValueError:
+            relative_path = md_file.name
+    else:
+        relative_path = md_file.name
+
+    doc = {
+        "id": 1,
+        "title": title,
+        "content": content,
+        "file_path": relative_path,
+        "category": md_file.parent.name if md_file.parent.name != "." else "root",
+    }
+
+    logger.info(f"Loaded markdown file: {file_path}")
+    return doc
+
+
 def extract_title_from_markdown(content: str) -> Optional[str]:
     """
     Extract title from markdown content.
@@ -574,7 +696,12 @@ def create_chunk_objects(
     max_chunks_per_article: int = 10,
     model_name: str = "embeddinggemma:latest",
 ) -> List[Dict]:
-    """Legacy function for backward compatibility."""
+    """
+    Legacy function for backward compatibility.
+    
+    Note: Now uses deterministic chunk IDs based on source/file_path,
+    enabling proper incremental indexing via upsert.
+    """
     indexer = QdrantIndexer(None, None, model_name)
     return indexer.create_chunk_objects(
         article, chunk_size, chunk_overlap, max_chunks_per_article

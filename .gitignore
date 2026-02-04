@@ -7,3 +7,4 @@ qdrant_storage/
 __pycache__
 *.db
 *.db-*
+venv/

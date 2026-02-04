@@ -55,7 +55,7 @@ start_web() {
 
   # Start backend server
   echo "Starting backend server on http://localhost:8000..."
-  cd "${SCRIPT_DIR}/web/backend/app" && PYTHONPATH="${SCRIPT_DIR}:${SCRIPT_DIR}/web/backend:${PYTHONPATH}" "${SCRIPT_DIR}/env/bin/python" -m uvicorn main:app --host 0.0.0.0 --port 8000 &
+  cd "${SCRIPT_DIR}/web/backend/app" && PYTHONPATH="${SCRIPT_DIR}:${SCRIPT_DIR}/web/backend:${PYTHONPATH}" "${SCRIPT_DIR}/venv/bin/python" -m uvicorn main:app --host 0.0.0.0 --port 8000 &
   backend_pid=$!
 
   # Give backend a moment to start
@@ -117,13 +117,13 @@ shift # Remove the first argument (command) so $@ contains only the remaining ar
 # Route to the appropriate CLI script
 case "$COMMAND" in
 query)
-  exec python "${SCRIPT_DIR}/cli/query.py" "$@"
+  exec "${SCRIPT_DIR}/venv/bin/python" "${SCRIPT_DIR}/cli/query.py" "$@"
   ;;
 index)
-  exec python "${SCRIPT_DIR}/cli/index.py" "$@"
+  exec "${SCRIPT_DIR}/venv/bin/python" "${SCRIPT_DIR}/cli/index.py" "$@"
   ;;
 chat)
-  exec python "${SCRIPT_DIR}/cli/chat.py" "$@"
+  exec "${SCRIPT_DIR}/venv/bin/python" "${SCRIPT_DIR}/cli/chat.py" "$@"
   ;;
 web)
   start_web
