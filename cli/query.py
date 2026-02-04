@@ -75,8 +75,42 @@ def format_json_results(
     return json.dumps(output_data, indent=2, ensure_ascii=False)
 
 
+def format_llm_results(
+    results: List[Dict[str, Any]], query: str, max_content_chars: int = 300
+) -> str:
+    """
+    Format results optimized for LLM consumption.
+    Compact, no emojis, minimal metadata, token-efficient.
+    """
+    if not results:
+        return f"[Q] {query}\n[0 results]"
+
+    output = [f"[Q] {query}", f"[{len(results)} results]", ""]
+
+    for i, result in enumerate(results, 1):
+        payload = result.get("payload", {})
+        score = result.get("score", 0)
+        title = payload.get("title", "Untitled")
+        source = payload.get("source", "unknown")
+        content = payload.get("content", "")
+
+        # Clean and truncate content
+        content = content.strip().replace("\n", " ")
+        if len(content) > max_content_chars:
+            content = content[:max_content_chars] + "..."
+
+        # Compact format: #N (score) Title | Source
+        output.append(f"#{i} ({score:.2f}) {title} | {source}")
+        output.append(content)
+        output.append("")
+
+    return "\n".join(output).strip()
+
+
 def perform_search(args, embedding_client: OllamaEmbeddingClient) -> None:
     """Perform a single search operation."""
+    verbose = getattr(args, 'verbose', False)
+    
     # Connect to Qdrant
     qdrant_client = QdrantClient(url=args.qdrant_url, timeout=60.0)
     search_client = QdrantSearchClient(qdrant_client)
@@ -84,32 +118,37 @@ def perform_search(args, embedding_client: OllamaEmbeddingClient) -> None:
     try:
         # Show collection stats if requested
         if args.stats:
-            print("📊 Collection Statistics:")
+            if verbose:
+                print("📊 Collection Statistics:")
             stats = search_client.get_collection_stats(args.collection)
             for key, value in stats.items():
                 print(f"   {key}: {value}")
             print()
 
         # Generate query embedding
-        print(f"🔍 Searching for: '{args.query}'")
+        if verbose:
+            print(f"🔍 Searching for: '{args.query}'")
 
         # Format query according to model requirements
         formatted_query = format_query(args.query, args.model, args.task_type)
 
-        if formatted_query != args.query:
+        if verbose and formatted_query != args.query:
             print(f"📝 Formatted query: '{formatted_query}'")
 
-        print("⏳ Generating query embedding...")
+        if verbose:
+            print("⏳ Generating query embedding...")
 
         embed_start = time.time()
         query_vector = embedding_client.embed_text(formatted_query, args.model)
         embed_time = (time.time() - embed_start) * 1000
 
-        print(f"✅ Embedding generated in {embed_time:.1f}ms")
+        if verbose:
+            print(f"✅ Embedding generated in {embed_time:.1f}ms")
 
         # Perform search
         search_method = "hybrid" if args.hybrid else "simple"
-        print(f"🔎 Performing {search_method} search...")
+        if verbose:
+            print(f"🔎 Performing {search_method} search...")
         search_start = time.time()
 
         if args.hybrid:
@@ -133,19 +172,25 @@ def perform_search(args, embedding_client: OllamaEmbeddingClient) -> None:
 
         search_time = (time.time() - search_start) * 1000
 
-        print(f"✅ {search_method.title()} search completed in {search_time:.1f}ms")
-        print(f"📈 Found {len(results)} results")
+        if verbose:
+            print(f"✅ {search_method.title()} search completed in {search_time:.1f}ms")
+            print(f"📈 Found {len(results)} results")
 
         # Format and display results
         if args.output_format == "json":
             output = format_json_results(results, args.query, args.group_by_article)
         elif args.output_format == "compact":
             output = format_compact_results(results, args.query)
-        elif args.group_by_article:
-            grouped = group_results_by_article(results)
-            output = format_grouped_results(grouped, args.query)
+        elif args.output_format == "verbose":
+            # Original detailed format with emojis
+            if args.group_by_article:
+                grouped = group_results_by_article(results)
+                output = format_grouped_results(grouped, args.query)
+            else:
+                output = format_detailed_results(results, args.query)
         else:
-            output = format_detailed_results(results, args.query)
+            # Default: LLM-optimized format
+            output = format_llm_results(results, args.query, args.max_content)
 
         print(output)
 
@@ -153,10 +198,11 @@ def perform_search(args, embedding_client: OllamaEmbeddingClient) -> None:
         if args.output_file:
             with open(args.output_file, "w", encoding="utf-8") as f:
                 f.write(output)
-            print(f"\n💾 Results saved to: {args.output_file}")
+            if verbose:
+                print(f"\n💾 Results saved to: {args.output_file}")
 
     except Exception as e:
-        print(f"❌ Error: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
         qdrant_client.close()
@@ -290,11 +336,16 @@ def main():
 Examples:
   %(prog)s "machine learning algorithms"
   %(prog)s "what is neural network" --hybrid --limit 5
+  %(prog)s "query" --verbose  # Show debug logs and detailed output
   %(prog)s --interactive --collection docs
   %(prog)s --article-id 123 --collection articles
   %(prog)s "deep learning" --output-format json --output results.json
 
-Supported output formats: detailed, compact, json
+Output formats:
+  llm (default) - Compact, token-efficient for LLM consumption
+  verbose       - Detailed with emojis and full metadata  
+  compact       - Brief format
+  json          - Machine-readable JSON
     """,
     )
 
@@ -369,9 +420,20 @@ Supported output formats: detailed, compact, json
     # Output options
     parser.add_argument(
         "--output-format",
-        choices=["detailed", "compact", "json"],
-        default="detailed",
-        help="Output format (default: detailed)",
+        choices=["llm", "verbose", "compact", "json"],
+        default="llm",
+        help="Output format: llm (default, token-efficient), verbose (detailed with emojis), compact, json",
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Show debug/timing logs and use verbose output format",
+    )
+    parser.add_argument(
+        "--max-content",
+        type=int,
+        default=300,
+        help="Max characters per result content (default: 300)",
     )
     parser.add_argument(
         "--group-by-article", action="store_true", help="Group results by article"
@@ -397,6 +459,16 @@ Supported output formats: detailed, compact, json
     # Load config from file if specified
     if args.config_file:
         config = get_config(args.config_file)
+
+    # If --verbose flag is set, use verbose output format unless explicitly overridden
+    if args.verbose and args.output_format == "llm":
+        args.output_format = "verbose"
+
+    # Suppress httpx logs unless verbose
+    if not args.verbose:
+        import logging
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     # Validate arguments
     if not args.query and not args.interactive and args.article_id is None:
