@@ -1,0 +1,112 @@
+#!/bin/bash
+# qmem - Quick QRAS memory search wrapper
+# Usage: qmem "search query" [--limit N] [--collection NAME]
+
+set -e
+
+# Config file location
+CONFIG_FILE="${QMEM_CONFIG:-$HOME/.openclaw/workspace/.qmem.conf}"
+
+# Load config
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+else
+    echo "Error: Config file not found: $CONFIG_FILE"
+    echo ""
+    echo "Create config from template:"
+    echo "  cp .qmem.conf.example .qmem.conf"
+    echo "  # Edit .qmem.conf with your settings"
+    exit 1
+fi
+
+# Validate required config
+if [ -z "$QRAS_DIR" ]; then
+    echo "Error: QRAS_DIR not set in config"
+    exit 1
+fi
+
+if [ -z "$COLLECTION" ]; then
+    echo "Error: COLLECTION not set in config"
+    exit 1
+fi
+
+if [ -z "$OLLAMA_HOST" ]; then
+    echo "Error: OLLAMA_HOST not set in config"
+    exit 1
+fi
+
+# Defaults for optional params
+MIN_SCORE="${MIN_SCORE:-0.22}"
+LIMIT="${LIMIT:-3}"
+MAX_CONTENT="${MAX_CONTENT:-600}"
+
+# Parse arguments
+QUERY=""
+CUSTOM_COLLECTION=""
+EXTRA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --collection)
+            CUSTOM_COLLECTION="$2"
+            shift 2
+            ;;
+        --limit)
+            LIMIT="$2"
+            shift 2
+            ;;
+        --min-score)
+            MIN_SCORE="$2"
+            shift 2
+            ;;
+        --max-content)
+            MAX_CONTENT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: qmem \"search query\" [options]"
+            echo ""
+            echo "Options:"
+            echo "  --collection NAME   Override collection (default: $COLLECTION)"
+            echo "  --limit N           Max results (default: $LIMIT)"
+            echo "  --min-score N       Min relevance score (default: $MIN_SCORE)"
+            echo "  --max-content N     Max content chars (default: $MAX_CONTENT)"
+            echo ""
+            echo "Config: $CONFIG_FILE"
+            exit 0
+            ;;
+        -*)
+            EXTRA_ARGS+=("$1")
+            shift
+            ;;
+        *)
+            if [ -z "$QUERY" ]; then
+                QUERY="$1"
+            else
+                EXTRA_ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate query
+if [ -z "$QUERY" ]; then
+    echo "Usage: qmem \"search query\" [--limit N] [--collection NAME]"
+    exit 1
+fi
+
+# Use custom collection if provided
+TARGET_COLLECTION="${CUSTOM_COLLECTION:-$COLLECTION}"
+
+# Export Ollama host for QRAS
+export OLLAMA_HOST
+
+# Run QRAS query
+cd "$QRAS_DIR" && ./qras query "$QUERY" \
+    --collection "$TARGET_COLLECTION" \
+    --limit "$LIMIT" \
+    --min-score "$MIN_SCORE" \
+    --max-content "$MAX_CONTENT" \
+    --hybrid \
+    "${EXTRA_ARGS[@]}"

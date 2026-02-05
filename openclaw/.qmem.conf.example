@@ -1,0 +1,16 @@
+# qmem Configuration
+# Copy this file to .qmem.conf and edit values
+
+# Required: Path to QRAS installation
+QRAS_DIR=/home/user/.openclaw/workspace/qras
+
+# Required: Qdrant collection name for memory storage
+COLLECTION=oc_memory
+
+# Required: Ollama host (for embeddings)
+OLLAMA_HOST=localhost:11434
+
+# Optional: Search parameters (defaults shown)
+# MIN_SCORE=0.22
+# LIMIT=3
+# MAX_CONTENT=600
