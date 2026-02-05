@@ -451,6 +451,83 @@ docker run -p 6333:6333 qdrant/qdrant
    ./qras chat --interactive  # Streaming enabled by default
    ```
 
+## OpenClaw Integration
+
+QRAS can be used as a semantic memory search backend for [OpenClaw](https://github.com/openclaw/openclaw) agents.
+
+### Quick Setup
+
+1. **Install QRAS** (follow Getting Started above)
+
+2. **Copy `qmem` wrapper to workspace:**
+
+   ```bash
+   cd ~/.openclaw/workspace
+   cp qras/openclaw/qmem ./qmem
+   chmod +x ./qmem
+   ```
+
+3. **Create config file:**
+
+   ```bash
+   cp .qmem.conf.example .qmem.conf
+   nano .qmem.conf
+   ```
+
+   **`.qmem.conf` contents:**
+
+   ```bash
+   QRAS_DIR=/home/user/.openclaw/workspace/qras
+   COLLECTION=oc_memory
+   OLLAMA_HOST=localhost:11434
+   ```
+
+4. **Index your memory files:**
+
+   ```bash
+   cd qras
+   ./qras index --input-path ~/.openclaw/workspace/memory --collection oc_memory --file-type markdown
+   ./qras index --input-path ~/.openclaw/workspace/MEMORY.md --collection oc_memory
+   ```
+
+5. **Test search:**
+
+   ```bash
+   cd ~/.openclaw/workspace
+   ./qmem "test query"
+   ```
+
+### Agent Configuration
+
+Add to your `AGENTS.md` to enforce QRAS-first behavior:
+
+```markdown
+### 🔍 Memory Recall Rule
+
+**QRAS first, `memory_search` fallback.** When recalling anything, always use QRAS first. Only fall back to built-in `memory_search` if QRAS returns no results or errors.
+
+### ⚠️ Index After Writing Memory
+
+Every time you update a memory file (`memory/*.md`, `MEMORY.md`), re-index it:
+
+\`\`\`bash
+cd ~/.openclaw/workspace/qras && ./qras index --input-path <path-to-file> --collection oc_memory
+\`\`\`
+```
+
+### Config Reference
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `QRAS_DIR` | ✅ | - | Path to QRAS installation |
+| `COLLECTION` | ✅ | - | Qdrant collection name |
+| `OLLAMA_HOST` | ✅ | - | Ollama server (host:port) |
+| `MIN_SCORE` | ❌ | 0.22 | Minimum relevance score |
+| `LIMIT` | ❌ | 3 | Max results returned |
+| `MAX_CONTENT` | ❌ | 600 | Max content chars per result |
+
+For detailed instructions, see the [OpenClaw QRAS skill](https://github.com/openclaw/openclaw/tree/main/skills/qras).
+
 ## Acknowledgments
 
 - [Qdrant](https://qdrant.tech/) - Vector database
