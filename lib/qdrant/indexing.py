@@ -13,9 +13,19 @@ from pathlib import Path
 from typing import List, Optional, Dict, Callable
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import (
+    Distance, 
+    VectorParams, 
+    PointStruct,
+    SparseVectorParams,
+    SparseIndexParams,
+    Modifier,
+    NamedVector,
+    NamedSparseVector,
+)
 
 from ..embedding.client import OllamaEmbeddingClient
+from .sparse import generate_sparse_vector, SparseVector
 from ..embedding.formatter import format_document
 from ..utils.exclude import load_exclude_patterns, filter_files, should_exclude
 
@@ -71,15 +81,17 @@ class QdrantIndexer:
         vector_size: int = 768,
         distance: Distance = Distance.COSINE,
         on_disk_payload: bool = False,
+        enable_sparse: bool = True,
     ) -> bool:
         """
-        Create a new Qdrant collection.
+        Create a new Qdrant collection with hybrid search support.
 
         Args:
             collection_name: Name of the collection to create
             vector_size: Dimension of the embedding vectors
             distance: Distance metric to use
             on_disk_payload: Whether to store payload on disk
+            enable_sparse: Whether to enable sparse vectors for BM25 search
 
         Returns:
             True if collection was created successfully, False otherwise
@@ -93,19 +105,32 @@ class QdrantIndexer:
                 logger.info(f"Collection '{collection_name}' already exists")
                 return True
 
-            # Create collection with specified parameters
+            # Configure sparse vectors if enabled
+            sparse_config = None
+            if enable_sparse:
+                sparse_config = {
+                    "sparse": SparseVectorParams(
+                        modifier=Modifier.IDF,  # Enable IDF weighting for BM25-like scoring
+                    )
+                }
+
+            # Create collection with both dense and sparse vectors
             self.qdrant_client.create_collection(
                 collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=vector_size,
-                    distance=distance,
-                    on_disk=True,  # Store vectors on disk for better memory usage
-                ),
+                vectors_config={
+                    "dense": VectorParams(
+                        size=vector_size,
+                        distance=distance,
+                        on_disk=True,
+                    )
+                },
+                sparse_vectors_config=sparse_config,
                 on_disk_payload=on_disk_payload,
             )
 
+            sparse_status = "with sparse vectors" if enable_sparse else "dense only"
             logger.info(
-                f"✅ Created collection '{collection_name}' (vector_size={vector_size})"
+                f"✅ Created collection '{collection_name}' (vector_size={vector_size}, {sparse_status})"
             )
             return True
 
@@ -256,9 +281,10 @@ class QdrantIndexer:
         batch_size: int = 50,
         max_workers: int = 4,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        enable_sparse: bool = True,
     ) -> bool:
         """
-        Index chunks into Qdrant collection.
+        Index chunks into Qdrant collection with hybrid vector support.
 
         Args:
             collection_name: Name of the collection to index into
@@ -266,6 +292,7 @@ class QdrantIndexer:
             batch_size: Number of chunks to process in each batch
             max_workers: Number of concurrent embedding workers
             progress_callback: Optional callback for progress reporting
+            enable_sparse: Whether to generate sparse vectors for BM25 search
 
         Returns:
             True if indexing succeeded, False otherwise
@@ -288,7 +315,7 @@ class QdrantIndexer:
                 # Extract texts for embedding
                 texts = [chunk["text"] for chunk in batch_chunks]
 
-                # Generate embeddings concurrently
+                # Generate dense embeddings concurrently
                 embeddings = self.embed_batch_concurrent(texts, max_workers)
 
                 # Create points for Qdrant
@@ -300,9 +327,25 @@ class QdrantIndexer:
                         )
                         continue
 
+                    # Build vector dict with named dense vector
+                    vectors = {
+                        "dense": embedding
+                    }
+                    
+                    # Generate and add sparse vector if enabled
+                    if enable_sparse:
+                        # Combine title and content for sparse vector, boost title terms
+                        sparse_text = f"{chunk['title']} {chunk['content']}"
+                        sparse_vec = generate_sparse_vector(
+                            sparse_text, 
+                            boost_terms=[chunk['title']]
+                        )
+                        if sparse_vec.indices:  # Only add if non-empty
+                            vectors["sparse"] = sparse_vec.to_dict()
+
                     point = PointStruct(
                         id=chunk["chunk_id"],
-                        vector=embedding,
+                        vector=vectors,
                         payload={
                             "article_id": chunk["article_id"],
                             "chunk_index": chunk["chunk_index"],
@@ -439,7 +482,8 @@ def read_markdown_files(
         List of document dictionaries with id, title, and content
     """
     documents = []
-    directory = Path(directory_path)
+    directory = Path(directory_path).resolve()  # Resolve to absolute for proper relative_to
+    cwd = Path.cwd()
 
     if not directory.exists():
         raise FileNotFoundError(f"Directory not found: {directory_path}")
@@ -480,11 +524,17 @@ def read_markdown_files(
                 title = md_file.stem.replace("_", " ").replace("-", " ")
 
             # Create document with unique ID based on file index
+            # Calculate path relative to cwd for consistent source references
+            try:
+                relative_path = str(md_file.relative_to(cwd))
+            except ValueError:
+                relative_path = str(md_file.relative_to(directory))
+            
             doc = {
                 "id": idx + 1,  # Start from 1
                 "title": title,
                 "content": content,
-                "file_path": str(md_file.relative_to(directory)),
+                "file_path": relative_path,
                 "category": md_file.parent.name
                 if md_file.parent != directory
                 else "root",
@@ -608,7 +658,7 @@ def read_single_markdown_file(
     Raises:
         ValueError: If file matches exclude patterns
     """
-    md_file = Path(file_path)
+    md_file = Path(file_path).resolve()  # Resolve to absolute path for proper relative_to calculation
     
     # Check if file should be excluded
     if exclude_patterns and should_exclude(str(md_file), exclude_patterns):
@@ -642,7 +692,11 @@ def read_single_markdown_file(
         except ValueError:
             relative_path = md_file.name
     else:
-        relative_path = md_file.name
+        # Fallback: use path relative to cwd if possible
+        try:
+            relative_path = str(md_file.relative_to(Path.cwd()))
+        except ValueError:
+            relative_path = md_file.name
 
     doc = {
         "id": 1,

@@ -16,7 +16,10 @@ from qdrant_client.models import (
     MatchText,
     MatchValue,
     Condition,
+    SparseVector,
 )
+
+from .sparse import generate_query_sparse_vector
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,7 @@ class QdrantSearchClient:
         limit: int = 10,
         min_score: float = 0.0,
         article_id: Optional[int] = None,
+        use_named_vector: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Simple vector search in Qdrant collection.
@@ -50,6 +54,7 @@ class QdrantSearchClient:
             limit: Maximum number of results
             min_score: Minimum similarity score threshold
             article_id: Optional article ID to search within specific article
+            use_named_vector: Whether to use named "dense" vector (for hybrid collections)
 
         Returns:
             List of search results with scores and payload
@@ -61,6 +66,10 @@ class QdrantSearchClient:
             "with_payload": True,
             "score_threshold": min_score if min_score > 0 else None,
         }
+        
+        # Use named vector for hybrid collections
+        if use_named_vector:
+            search_params["using"] = "dense"
 
         # Add filter for specific article if requested
         if article_id:
@@ -92,18 +101,20 @@ class QdrantSearchClient:
         min_score: float = 0.0,
         article_id: Optional[int] = None,
         fusion_method: str = "rrf",
+        enable_sparse: bool = True,
     ) -> List[Dict[str, Any]]:
         """
-        Hybrid search combining vector similarity and text matching for better relevance.
+        True hybrid search combining dense vectors (semantic) and sparse vectors (BM25).
 
         Args:
             collection_name: Name of the collection to search
-            query_text: Original query text for keyword matching
+            query_text: Original query text for sparse/keyword matching
             query_vector: Query embedding vector for semantic search
             limit: Maximum number of results
             min_score: Minimum similarity score threshold
             article_id: Optional article ID to search within specific article
             fusion_method: Fusion method ('rrf' or 'dbsf')
+            enable_sparse: Whether to include sparse vector search (BM25)
 
         Returns:
             List of search results with hybrid scores and payload
@@ -120,52 +131,31 @@ class QdrantSearchClient:
             # Build prefetch queries for hybrid search
             prefetch_queries = []
 
-            # 1. Semantic search (vector similarity)
+            # 1. Dense vector search (semantic similarity)
             prefetch_queries.append(
                 models.Prefetch(
                     query=query_vector,
-                    limit=limit * 2,  # Get more candidates for fusion
+                    using="dense",
+                    limit=limit * 3,  # Get more candidates for fusion
                     filter=query_filter,
                 )
             )
 
-            # 2. Title keyword matching (boost title relevance)
-            if query_text.strip():
-                title_conditions: List[Condition] = [
-                    FieldCondition(key="title", match=MatchText(text=query_text))
-                ]
-                if article_id:
-                    title_conditions.append(
-                        FieldCondition(
-                            key="article_id", match=MatchValue(value=article_id)
+            # 2. Sparse vector search (BM25-style keyword matching)
+            if enable_sparse and query_text.strip():
+                sparse_query = generate_query_sparse_vector(query_text)
+                if sparse_query.indices:  # Only if non-empty
+                    prefetch_queries.append(
+                        models.Prefetch(
+                            query=SparseVector(
+                                indices=sparse_query.indices,
+                                values=sparse_query.values,
+                            ),
+                            using="sparse",
+                            limit=limit * 3,
+                            filter=query_filter,
                         )
                     )
-                prefetch_queries.append(
-                    models.Prefetch(
-                        query=query_vector,
-                        limit=limit * 2,
-                        filter=Filter(must=title_conditions),
-                    )
-                )
-
-            # 3. Content keyword matching
-            if query_text.strip():
-                content_conditions: List[Condition] = [
-                    FieldCondition(key="content", match=MatchText(text=query_text))
-                ]
-                if article_id:
-                    content_conditions.append(
-                        FieldCondition(
-                            key="article_id", match=MatchValue(value=article_id)
-                        )
-                    )
-                prefetch_queries.append(
-                    models.Prefetch(
-                        query=query_vector,
-                        limit=limit * 2,
-                        filter=Filter(must=content_conditions),
-                    )
-                )
 
             # Select fusion method
             fusion = (
@@ -174,7 +164,7 @@ class QdrantSearchClient:
                 else models.Fusion.DBSF
             )
 
-            # Execute hybrid query
+            # Execute hybrid query with RRF fusion
             results = self.client.query_points(
                 collection_name=collection_name,
                 prefetch=prefetch_queries,
