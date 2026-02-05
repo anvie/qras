@@ -526,7 +526,7 @@ cd ~/.openclaw/workspace/qras && ./qras index --input-path <path-to-file> --coll
 | `LIMIT` | ❌ | 3 | Max results returned |
 | `MAX_CONTENT` | ❌ | 600 | Max content chars per result |
 
-For detailed instructions, see the [OpenClaw QRAS skill](https://github.com/openclaw/openclaw/tree/main/skills/qras).
+For detailed instructions, see the [OpenClaw QRAS skill](./openclaw/SKILL.md).
 
 ## Acknowledgments
 
