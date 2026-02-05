@@ -96,6 +96,7 @@ class SearchConfig:
     min_score: float = 0.0
     fusion_method: str = "rrf"  # "rrf" or "dbsf"
     enable_hybrid_search: bool = True
+    enable_sparse: bool = True  # Enable sparse vector search (BM25)
 
     @classmethod
     def from_env(cls, prefix: str = "SEARCH_") -> "SearchConfig":
@@ -106,6 +107,8 @@ class SearchConfig:
             min_score=float(os.getenv(f"{prefix}MIN_SCORE", cls.min_score)),
             fusion_method=os.getenv(f"{prefix}FUSION_METHOD", cls.fusion_method),
             enable_hybrid_search=os.getenv(f"{prefix}ENABLE_HYBRID", "true").lower()
+            == "true",
+            enable_sparse=os.getenv(f"{prefix}ENABLE_SPARSE", "true").lower()
             == "true",
         )
 

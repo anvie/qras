@@ -160,6 +160,7 @@ def perform_search(args, embedding_client: OllamaEmbeddingClient) -> None:
                 min_score=args.min_score,
                 article_id=args.article_id,
                 fusion_method=args.fusion_method,
+                enable_sparse=not getattr(args, 'no_sparse', False),
             )
         else:
             results = search_client.simple_search(
@@ -404,6 +405,11 @@ Output formats:
         action="store_true",
         default=config.search.enable_hybrid_search,
         help="Use hybrid search (vector + keyword matching)",
+    )
+    parser.add_argument(
+        "--no-sparse",
+        action="store_true",
+        help="Disable sparse vector search (use dense only)",
     )
     parser.add_argument(
         "--fusion-method",
