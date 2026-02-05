@@ -75,12 +75,69 @@ def format_json_results(
     return json.dumps(output_data, indent=2, ensure_ascii=False)
 
 
+def extract_relevant_snippet(content: str, query: str, max_chars: int = 300) -> str:
+    """
+    Extract the most relevant snippet from content based on query terms.
+    Uses line-level extraction with query term density scoring.
+    Optimized for markdown content (bullet points, headers).
+    """
+    import re
+    
+    # Tokenize query into terms (lowercase, min 2 chars)
+    query_terms = set(
+        term.lower() for term in re.findall(r'\w+', query) 
+        if len(term) >= 2
+    )
+    
+    if not query_terms:
+        # Fallback to simple truncation
+        content = content.strip().replace("\n", " ")
+        return content[:max_chars] + "..." if len(content) > max_chars else content
+    
+    # Split content into lines (works better for markdown than sentence splitting)
+    lines = [l.strip() for l in content.split('\n') if l.strip()]
+    if not lines:
+        return content[:max_chars]
+    
+    # Score each line by query term overlap
+    scored_lines = []
+    for line in lines:
+        line_lower = line.lower()
+        # Count matching terms
+        matches = sum(1 for term in query_terms if term in line_lower)
+        if matches > 0:
+            scored_lines.append((matches, line))
+    
+    # If no matches, return first part of content
+    if not scored_lines:
+        content = content.strip().replace("\n", " ")
+        return content[:max_chars] + "..." if len(content) > max_chars else content
+    
+    # Sort by score (descending) and build snippet
+    scored_lines.sort(key=lambda x: -x[0])
+    
+    snippet_parts = []
+    total_chars = 0
+    
+    for score, line in scored_lines:
+        line_clean = line.strip()
+        if total_chars + len(line_clean) > max_chars:
+            if not snippet_parts:  # Ensure at least one line
+                snippet_parts.append(line_clean[:max_chars])
+            break
+        snippet_parts.append(line_clean)
+        total_chars += len(line_clean) + 2  # +2 for separator
+    
+    return "  ".join(snippet_parts) if snippet_parts else content[:max_chars]
+
+
 def format_llm_results(
     results: List[Dict[str, Any]], query: str, max_content_chars: int = 300
 ) -> str:
     """
     Format results optimized for LLM consumption.
     Compact, no emojis, minimal metadata, token-efficient.
+    Uses query-aware snippet extraction for better relevance.
     """
     if not results:
         return f"[Q] {query}\n[0 results]"
@@ -94,10 +151,8 @@ def format_llm_results(
         source = payload.get("source", "unknown")
         content = payload.get("content", "")
 
-        # Clean and truncate content
-        content = content.strip().replace("\n", " ")
-        if len(content) > max_content_chars:
-            content = content[:max_content_chars] + "..."
+        # Extract query-relevant snippet instead of simple truncation
+        content = extract_relevant_snippet(content, query, max_content_chars)
 
         # Compact format: #N (score) Title | Source
         output.append(f"#{i} ({score:.2f}) {title} | {source}")
