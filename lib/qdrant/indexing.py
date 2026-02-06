@@ -221,7 +221,7 @@ class QdrantIndexer:
 
             # Use the embedding formatter to format text according to model requirements
             formatted_text = format_document(title, chunk, self.embedding_model)
-            print("Formatted text:", formatted_text)
+            # Debug: print("Formatted text:", formatted_text)
 
             # Generate deterministic chunk ID based on source and index
             # This enables proper incremental updates via upsert
