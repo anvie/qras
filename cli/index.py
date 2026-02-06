@@ -44,6 +44,7 @@ def create_collection_if_needed(
     vector_size: int,
     distance_metric: str = "cosine",
     recreate: bool = False,
+    verbose: bool = False,
 ) -> bool:
     """Create collection if it doesn't exist."""
     try:
@@ -53,11 +54,11 @@ def create_collection_if_needed(
 
         if collection_name in existing_names:
             if recreate:
-                print(f"🗑️  Deleting existing collection '{collection_name}'...")
+                log_print(f"🗑️  Deleting existing collection '{collection_name}'...", verbose)
                 qdrant_client.delete_collection(collection_name)
-                print(f"✅ Collection '{collection_name}' deleted")
+                log_print(f"✅ Collection '{collection_name}' deleted", verbose)
             else:
-                print(f"📦 Collection '{collection_name}' already exists")
+                log_print(f"📦 Collection '{collection_name}' already exists", verbose)
                 return True
 
         # Map string distance to Qdrant Distance enum
@@ -68,8 +69,8 @@ def create_collection_if_needed(
         }
         distance = distance_map.get(distance_metric.lower(), Distance.COSINE)
 
-        print(
-            f"🏗️  Creating collection '{collection_name}' with {vector_size} dimensions..."
+        log_print(
+            f"🏗️  Creating collection '{collection_name}' with {vector_size} dimensions...", verbose
         )
 
         indexer = QdrantIndexer(
@@ -78,7 +79,7 @@ def create_collection_if_needed(
         success = indexer.create_collection(collection_name, vector_size, distance)
 
         if success:
-            print(f"✅ Collection '{collection_name}' created successfully")
+            log_print(f"✅ Collection '{collection_name}' created successfully", verbose)
             return True
         else:
             print(f"❌ Failed to create collection '{collection_name}'")
@@ -91,7 +92,8 @@ def create_collection_if_needed(
 
 def load_documents(
     input_path: str, max_docs: Optional[int] = None, file_type: str = "auto",
-    base_dir: Optional[str] = None, exclude_patterns: Optional[List[str]] = None
+    base_dir: Optional[str] = None, exclude_patterns: Optional[List[str]] = None,
+    verbose: bool = False
 ) -> List[Dict[str, Any]]:
     """Load documents from input path (file or directory)."""
     input_path_obj = Path(input_path)
@@ -102,12 +104,12 @@ def load_documents(
     # Handle single file input
     if input_path_obj.is_file():
         if input_path.endswith(".md"):
-            print(f"📄 Loading single markdown file: {input_path}")
+            log_print(f"📄 Loading single markdown file: {input_path}", verbose)
             doc = read_single_markdown_file(input_path, base_dir, exclude_patterns)
             return [doc]
         elif input_path.endswith(".json"):
             # For JSON, we still need to handle it - could be single doc or array
-            print(f"📄 Loading single JSON file: {input_path}")
+            log_print(f"📄 Loading single JSON file: {input_path}", verbose)
             return read_json_files(str(input_path_obj.parent), max_docs)
         else:
             raise ValueError(f"Unsupported file type: {input_path}")
@@ -125,14 +127,14 @@ def load_documents(
         elif md_files and not json_files:
             file_type = "markdown"
         elif json_files and md_files:
-            print(
-                f"📁 Found both JSON ({len(json_files)}) and Markdown ({len(md_files)}) files"
+            log_print(
+                f"📁 Found both JSON ({len(json_files)}) and Markdown ({len(md_files)}) files", verbose
             )
             file_type = "json"  # Prefer JSON if both exist
         else:
             raise ValueError(f"No supported files found in: {input_path}")
 
-    print(f"📂 Loading {file_type} documents from: {input_path}")
+    log_print(f"📂 Loading {file_type} documents from: {input_path}", verbose)
 
     if file_type == "json":
         return read_json_files(str(input_dir), max_docs)
@@ -142,9 +144,16 @@ def load_documents(
         raise ValueError(f"Unsupported file type: {file_type}")
 
 
+def log_print(message: str, verbose: bool = False) -> None:
+    """Print message only in verbose mode."""
+    if verbose:
+        print(message)
+
+
 def index_documents(args) -> None:
     """Main indexing function."""
-    print("🚀 Starting document indexing...")
+    verbose = args.verbose
+    log_print("🚀 Starting document indexing...", verbose)
     start_time = time.time()
 
     # Load configuration
@@ -155,10 +164,10 @@ def index_documents(args) -> None:
     if not args.no_exclude:
         exclude_patterns = load_exclude_patterns(args.exclude_file)
         if exclude_patterns:
-            print(f"🚫 Loaded {len(exclude_patterns)} exclude patterns")
+            log_print(f"🚫 Loaded {len(exclude_patterns)} exclude patterns", verbose)
 
     # Initialize clients
-    print("🔗 Connecting to services...")
+    log_print("🔗 Connecting to services...", verbose)
     qdrant_client = QdrantClient(url=args.qdrant_url, timeout=60.0)
     embedding_client = OllamaEmbeddingClient(
         ollama_url=args.ollama_url,
@@ -167,7 +176,7 @@ def index_documents(args) -> None:
 
     try:
         # Get vector size for the model
-        print(f"🤖 Getting model information for: {args.model}")
+        log_print(f"🤖 Getting model information for: {args.model}", verbose)
         registry = get_model_registry(args.ollama_url)
         vector_size = registry.get_or_detect_vector_size(args.model)
 
@@ -180,7 +189,7 @@ def index_documents(args) -> None:
                 )
             sys.exit(1)
 
-        print(f"✅ Model '{args.model}' uses {vector_size} dimensional vectors")
+        log_print(f"✅ Model '{args.model}' uses {vector_size} dimensional vectors", verbose)
 
         # Create collection
         if not create_collection_if_needed(
@@ -189,24 +198,26 @@ def index_documents(args) -> None:
             vector_size,
             args.distance_metric,
             args.recreate,
+            verbose,
         ):
             sys.exit(1)
 
         # Load documents
-        print(f"📚 Loading documents from: {args.input_path}")
+        log_print(f"📚 Loading documents from: {args.input_path}", verbose)
         documents = load_documents(
             args.input_path, args.max_docs, args.file_type, 
-            exclude_patterns=exclude_patterns
+            exclude_patterns=exclude_patterns,
+            verbose=verbose
         )
 
         if not documents:
             print("❌ No documents found to index")
             sys.exit(1)
 
-        print(f"📖 Loaded {len(documents)} documents")
+        log_print(f"📖 Loaded {len(documents)} documents", verbose)
 
         # Show collection stats before indexing
-        if not args.quiet:
+        if verbose:
             stats = get_collection_stats(qdrant_client, args.collection)
             print("📊 Collection stats before indexing:")
             for key, value in stats.items():
@@ -220,7 +231,7 @@ def index_documents(args) -> None:
         )
 
         # Index documents
-        print(f"⚙️  Starting indexing with {args.workers} workers...")
+        log_print(f"⚙️  Starting indexing with {args.workers} workers...", verbose)
         success = indexer.index_documents(
             collection_name=args.collection,
             documents=documents,
@@ -229,29 +240,36 @@ def index_documents(args) -> None:
             max_chunks_per_article=args.max_chunks_per_article,
             batch_size=args.batch_size,
             max_workers=args.workers,
-            progress_callback=None if args.quiet else progress_callback,
+            progress_callback=progress_callback if verbose else None,
         )
 
         if not success:
             print("❌ Indexing failed")
             sys.exit(1)
 
-        # Show final stats
-        print("\n📊 Final collection statistics:")
-        stats = get_collection_stats(qdrant_client, args.collection)
-        for key, value in stats.items():
-            print(f"   {key}: {value}")
+        # Show final stats (verbose only)
+        if verbose:
+            print("\n📊 Final collection statistics:")
+            stats = get_collection_stats(qdrant_client, args.collection)
+            for key, value in stats.items():
+                print(f"   {key}: {value}")
 
-        # Calculate and show timing
+        # Calculate timing
         elapsed_time = time.time() - start_time
         minutes = int(elapsed_time // 60)
         seconds = elapsed_time % 60
 
-        print("\n✅ Indexing completed successfully!")
-        print(f"⏱️  Total time: {minutes}m {seconds:.1f}s")
-        print(f"📈 Indexed {len(documents)} documents")
-        print(f"🎯 Collection: {args.collection}")
-        print(f"🤖 Model: {args.model}")
+        # Essential output - always show success summary
+        if not verbose:
+            # Minimal output (default mode)
+            stats = get_collection_stats(qdrant_client, args.collection)
+            print(f"✅ Indexed {len(documents)} docs → {args.collection} ({stats.get('points_count', '?')} chunks, {minutes}m {seconds:.1f}s)")
+        else:
+            print("\n✅ Indexing completed successfully!")
+            print(f"⏱️  Total time: {minutes}m {seconds:.1f}s")
+            print(f"📈 Indexed {len(documents)} documents")
+            print(f"🎯 Collection: {args.collection}")
+            print(f"🤖 Model: {args.model}")
 
     except KeyboardInterrupt:
         print("\n⚠️  Indexing interrupted by user")
@@ -463,18 +481,24 @@ Single file indexing uses deterministic IDs for proper upsert (update in place).
 
     # Output options
     parser.add_argument(
-        "--quiet",
-        "-q",
+        "--verbose",
+        "-v",
         action="store_true",
-        help="Reduce verbose output during processing",
+        help="Show detailed progress and debug output (default: minimal output)",
     )
     parser.add_argument("--config-file", help="Path to configuration file")
 
     args = parser.parse_args()
 
-    # Setup logging
-    log_level = logging.WARNING if args.quiet else logging.INFO
+    # Setup logging - use ERROR level by default, INFO only in verbose mode
+    log_level = logging.INFO if args.verbose else logging.ERROR
     logging.basicConfig(level=log_level, format="%(levelname)s: %(message)s")
+    
+    # Suppress library logs unless verbose
+    if not args.verbose:
+        logging.getLogger("httpx").setLevel(logging.ERROR)
+        logging.getLogger("urllib3").setLevel(logging.ERROR)
+        logging.getLogger("qdrant_client").setLevel(logging.ERROR)
 
     # Validate arguments
     if not args.input_path and not args.info and not args.delete:
