@@ -24,7 +24,7 @@ from lib.qdrant.search import (
     format_detailed_results,
     format_compact_results,
 )
-from lib.qdrant.reranker import LLMReranker
+from lib.qdrant.reranker import LLMReranker, clean_markdown_for_rerank
 from lib.utils.config import get_config, setup_logging
 
 
@@ -152,6 +152,9 @@ def format_llm_results(
         source = payload.get("source", "unknown")
         content = payload.get("content", "")
 
+        # Clean markdown artifacts for cleaner output
+        content = clean_markdown_for_rerank(content)
+        
         # Extract query-relevant snippet instead of simple truncation
         content = extract_relevant_snippet(content, query, max_content_chars)
 
