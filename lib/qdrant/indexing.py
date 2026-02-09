@@ -524,11 +524,18 @@ def read_markdown_files(
                 title = md_file.stem.replace("_", " ").replace("-", " ")
 
             # Create document with unique ID based on file index
-            # Calculate path relative to cwd for consistent source references
+            # Calculate path relative to input directory, preserving directory name
             try:
+                # First try relative to cwd (if files are under current directory)
                 relative_path = str(md_file.relative_to(cwd))
             except ValueError:
-                relative_path = str(md_file.relative_to(directory))
+                # If not under cwd, use path relative to parent of input directory
+                # This preserves the directory name (e.g., "memory/file.md" not just "file.md")
+                try:
+                    relative_path = str(md_file.relative_to(directory.parent))
+                except ValueError:
+                    # Last resort: use directory name + relative path within it
+                    relative_path = f"{directory.name}/{md_file.relative_to(directory)}"
             
             doc = {
                 "id": idx + 1,  # Start from 1
@@ -685,18 +692,28 @@ def read_single_markdown_file(
     if not title:
         title = md_file.stem.replace("_", " ").replace("-", " ")
 
-    # Calculate relative path
+    # Calculate relative path, preserving directory structure
+    cwd = Path.cwd()
     if base_dir:
+        base_path = Path(base_dir).resolve()
         try:
-            relative_path = str(md_file.relative_to(base_dir))
+            relative_path = str(md_file.relative_to(base_path))
         except ValueError:
-            relative_path = md_file.name
+            # If file not under base_dir, try relative to base_dir's parent
+            try:
+                relative_path = str(md_file.relative_to(base_path.parent))
+            except ValueError:
+                relative_path = md_file.name
     else:
-        # Fallback: use path relative to cwd if possible
+        # Try relative to cwd first
         try:
-            relative_path = str(md_file.relative_to(Path.cwd()))
+            relative_path = str(md_file.relative_to(cwd))
         except ValueError:
-            relative_path = md_file.name
+            # Try relative to parent of file's directory
+            try:
+                relative_path = str(md_file.relative_to(md_file.parent.parent))
+            except ValueError:
+                relative_path = md_file.name
 
     doc = {
         "id": 1,
