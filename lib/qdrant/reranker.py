@@ -14,6 +14,66 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
+
+def clean_markdown_for_rerank(text: str) -> str:
+    """
+    Clean markdown artifacts from text for LLM reranking.
+    Removes formatting noise so LLM can focus on actual content.
+    """
+    if not text:
+        return ""
+    
+    # Remove code blocks (```...```)
+    text = re.sub(r'```[\s\S]*?```', ' ', text)
+    
+    # Remove inline code (`...`)
+    text = re.sub(r'`[^`]+`', ' ', text)
+    
+    # Remove markdown tables (lines with |)
+    lines = text.split('\n')
+    clean_lines = []
+    for line in lines:
+        # Skip table separator lines (|---|---|)
+        if re.match(r'^[\s|:-]+$', line):
+            continue
+        # Remove pipe characters from table rows but keep content
+        if '|' in line:
+            # Extract cell contents, skip empty cells
+            cells = [c.strip() for c in line.split('|') if c.strip()]
+            if cells:
+                clean_lines.append(' '.join(cells))
+        else:
+            clean_lines.append(line)
+    text = '\n'.join(clean_lines)
+    
+    # Remove markdown headers (# ## ###)
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+    
+    # Remove bold/italic markers
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)  # **bold**
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)      # *italic*
+    text = re.sub(r'__([^_]+)__', r'\1', text)      # __bold__
+    text = re.sub(r'_([^_]+)_', r'\1', text)        # _italic_
+    
+    # Remove links but keep text [text](url) -> text
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    
+    # Remove URLs
+    text = re.sub(r'https?://\S+', '', text)
+    
+    # Remove bullet markers
+    text = re.sub(r'^[\s]*[-*+]\s+', '', text, flags=re.MULTILINE)
+    
+    # Remove numbered list markers
+    text = re.sub(r'^[\s]*\d+\.\s+', '', text, flags=re.MULTILINE)
+    
+    # Collapse multiple whitespace/newlines
+    text = re.sub(r'\n\s*\n', '\n', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    
+    return text.strip()
+
+
 # Default reranking prompt template
 RERANK_PROMPT_TEMPLATE = """Kamu adalah penilai relevansi dokumen. Berikan skor 1-10 untuk relevansi dokumen terhadap query.
 
@@ -136,12 +196,15 @@ class LLMReranker:
         if not results:
             return []
 
-        # Prepare documents for scoring
+        # Prepare documents for scoring (clean markdown artifacts)
         docs_to_score = []
         for i, result in enumerate(results):
             content = result.get("payload", {}).get("content", "")
             title = result.get("payload", {}).get("title", "")
-            doc_text = f"{title}\n{content}" if title else content
+            # Clean markdown for better LLM understanding
+            clean_content = clean_markdown_for_rerank(content)
+            clean_title = clean_markdown_for_rerank(title)
+            doc_text = f"{clean_title}\n{clean_content}" if clean_title else clean_content
             docs_to_score.append((i, doc_text))
 
         # Score documents
