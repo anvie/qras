@@ -24,6 +24,7 @@ from lib.qdrant.search import (
     format_detailed_results,
     format_compact_results,
 )
+from lib.qdrant.reranker import LLMReranker
 from lib.utils.config import get_config, setup_logging
 
 
@@ -231,6 +232,26 @@ def perform_search(args, embedding_client: OllamaEmbeddingClient) -> None:
         if verbose:
             print(f"✅ {search_method.title()} search completed in {search_time:.1f}ms")
             print(f"📈 Found {len(results)} results")
+
+        # Apply LLM reranking if requested
+        if getattr(args, 'rerank', False) and results:
+            if verbose:
+                print(f"🔄 Reranking with {args.rerank_model}...")
+            rerank_start = time.time()
+            
+            reranker = LLMReranker(
+                ollama_url=args.ollama_url,
+                model=args.rerank_model,
+            )
+            results = reranker.rerank(
+                args.query,
+                results,
+                top_k=getattr(args, 'rerank_top_k', None),
+            )
+            
+            rerank_time = (time.time() - rerank_start) * 1000
+            if verbose:
+                print(f"✅ Reranking completed in {rerank_time:.1f}ms")
 
         # Format and display results
         if args.output_format == "json":
@@ -476,6 +497,24 @@ Output formats:
         "--task-type",
         default="search",
         help="Task type for query formatting (default: search)",
+    )
+
+    # Reranking options
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Enable LLM-based reranking of results using Ollama",
+    )
+    parser.add_argument(
+        "--rerank-model",
+        default="qwen2.5:0.5b",
+        help="Ollama model for reranking (default: qwen2.5:0.5b)",
+    )
+    parser.add_argument(
+        "--rerank-top-k",
+        type=int,
+        default=None,
+        help="Return only top K results after reranking",
     )
 
     # Output options
