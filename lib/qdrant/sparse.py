@@ -11,6 +11,70 @@ from collections import Counter
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
+
+def stem_indonesian(word: str) -> str:
+    """
+    Simple Indonesian stemmer for suffix removal.
+    
+    Handles common suffixes:
+    - Possessive: -nya, -ku, -mu
+    - Verb suffixes: -kan, -an
+    - Particles: -lah, -kah, -pun
+    
+    This is a lightweight stemmer focused on matching variations.
+    For full morphological analysis, use a proper library like Sastrawi.
+    
+    Note: Conservative approach - only removes suffixes when result is >= 3 chars
+    and the suffix is clearly detachable.
+    """
+    if len(word) < 4:
+        return word
+    
+    # Common words that should NOT be stemmed (false positives)
+    # These look like they have suffixes but they don't
+    NO_STEM = {
+        'punya', 'hanya', 'dunia', 'rahasia', 'biasa', 'rasa', 
+        'masa', 'bisa', 'jasa', 'desa', 'bahasa', 'angkasa',
+        'siapa', 'apa', 'dimana', 'kapan', 'mengapa', 'kenapa',
+        'saya', 'anda', 'dia', 'kita', 'kami', 'mereka',
+    }
+    
+    if word in NO_STEM:
+        return word
+    
+    original = word
+    
+    # Remove possessive suffixes first (most common cause of mismatch)
+    # Only if remaining stem is >= 3 chars
+    if word.endswith('nya') and len(word) > 5:
+        word = word[:-3]
+    elif word.endswith('ku') and len(word) > 4:
+        word = word[:-2]
+    elif word.endswith('mu') and len(word) > 4:
+        word = word[:-2]
+    
+    # Remove particles (only if result >= 3 chars)
+    if word.endswith('lah') and len(word) > 5:
+        word = word[:-3]
+    elif word.endswith('kah') and len(word) > 5:
+        word = word[:-3]
+    elif word.endswith('pun') and len(word) > 5:
+        word = word[:-3]
+    
+    # Remove verb/noun suffixes (conservative - only -kan and -an)
+    # Skip -i suffix as it causes too many false positives
+    if word.endswith('kan') and len(word) > 5:
+        word = word[:-3]
+    elif word.endswith('an') and len(word) > 4:
+        # Be extra careful with -an, lots of root words end in -an
+        # Only remove if word is long enough
+        candidate = word[:-2]
+        if len(candidate) >= 3:
+            word = candidate
+    
+    return word
+
+
 # Simple stopwords for filtering (multilingual: EN + ID)
 STOPWORDS = {
     # English
@@ -49,16 +113,17 @@ class SparseVector:
         }
 
 
-def tokenize(text: str, min_length: int = 2) -> List[str]:
+def tokenize(text: str, min_length: int = 2, stem: bool = True) -> List[str]:
     """
-    Tokenize text into words.
+    Tokenize text into words with optional Indonesian stemming.
     
     Args:
         text: Input text to tokenize
         min_length: Minimum token length to keep
+        stem: Apply Indonesian suffix stemming (default: True)
         
     Returns:
-        List of lowercase tokens
+        List of lowercase tokens (stemmed if enabled)
     """
     # Convert to lowercase
     text = text.lower()
@@ -74,6 +139,10 @@ def tokenize(text: str, min_length: int = 2) -> List[str]:
         t for t in tokens 
         if len(t) >= min_length and t not in STOPWORDS
     ]
+    
+    # Apply Indonesian stemming if enabled
+    if stem:
+        tokens = [stem_indonesian(t) for t in tokens]
     
     return tokens
 

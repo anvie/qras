@@ -510,8 +510,8 @@ Output formats:
     )
     parser.add_argument(
         "--rerank-model",
-        default="qwen2.5:0.5b",
-        help="Ollama model for reranking (default: qwen2.5:0.5b)",
+        default="csalab/sahabatai1:llama3_instruct_Q4_K_M",
+        help="Ollama model for reranking (default: sahabatai - better for Indonesian)",
     )
     parser.add_argument(
         "--rerank-top-k",

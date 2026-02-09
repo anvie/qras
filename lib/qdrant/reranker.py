@@ -29,12 +29,24 @@ def clean_markdown_for_rerank(text: str) -> str:
     # Remove inline code (`...`)
     text = re.sub(r'`[^`]+`', ' ', text)
     
-    # Remove markdown tables (lines with |)
+    # Remove table separator patterns INLINE (handles collapsed tables)
+    # Match full separator rows like: |--------|---------|---------------|
+    # This pattern matches: pipe, dashes/colons, pipe (repeated 2+ times)
+    text = re.sub(r'(?:\|[-:]+){2,}\|', ' ', text)
+    # Standalone separator sequences: just dashes/equals (4+ chars)
+    text = re.sub(r'\s[-=]{4,}\s', ' ', text)
+    text = re.sub(r'^[-=]{4,}\s', ' ', text)
+    text = re.sub(r'\s[-=]{4,}$', ' ', text)
+    
+    # Remove markdown tables and separators
     lines = text.split('\n')
     clean_lines = []
     for line in lines:
-        # Skip table separator lines (|---|---|)
-        if re.match(r'^[\s|:-]+$', line):
+        # Skip table separator lines: |---|---| or just -------- or === or :::
+        if re.match(r'^[\s|:\-=]+$', line):
+            continue
+        # Skip lines that are just dashes, equals, or underscores (horizontal rules)
+        if re.match(r'^[-=_]{3,}\s*$', line.strip()):
             continue
         # Remove pipe characters from table rows but keep content
         if '|' in line:
